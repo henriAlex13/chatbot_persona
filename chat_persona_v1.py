@@ -216,8 +216,13 @@ Fournis une description professionnelle en français incluant:
 - Stratégie marketing recommandée
 - Canaux de communication préférés
 - Proposition de valeur unique
-- RECOMMANDATIONS DE PRODUITS BANCAIRES ADAPTÉS avec les tarifs exacts du catalogue (si disponible)
-- Crée un package produit en énumérant les éléments de ce package, si possible
+- RECOMMANDATIONS DE PRODUITS BANCAIRES ADAPTÉS basées sur TOUS les critères de segmentation:
+  * Âge et maturité professionnelle (épargne retraite, assurance-vie, crédits immobiliers pour seniors vs jeunes actifs)
+  * Nombre de produits déjà utilisés (cross-selling intelligent, packages pour multi-équipés vs produits d'entrée pour nouveaux clients)
+  * Niveau de revenu (produits premium vs accessibles, plafonds et frais adaptés)
+  * Accessibilité mobile et email (banking digital, notifications, apps mobiles pour connectés vs agences physiques pour autres)
+  * Caractéristiques comportementales (produits automatisés pour actifs pressés, conseils personnalisés pour retraités, etc.)
+- Crée un package produit personnalisé en énumérant les éléments avec justification basée sur CHAQUE critère de segmentation
 
 Format: Utilise des sections claires avec des titres en gras."""
     
