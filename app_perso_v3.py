@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import json
-import PyPDF2
 import io
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -69,81 +68,43 @@ if "loaded_segments" not in st.session_state:
 # Sidebar - Configuration
 with st.sidebar:
    
-    st.header("📄 Catalogue Produits")
+    st.header("📊 Catalogue Produits")
     
-    # Choix du format
-    file_format = st.radio(
-        "Format du catalogue",
-        ["PDF", "Excel"],
-        horizontal=True
+    uploaded_excel = st.file_uploader(
+        "Charger le fichier Excel du catalogue produits",
+        type=["xlsx", "xls"],
+        help="Fichier Excel avec colonnes détaillées sur les produits bancaires"
     )
     
-    if file_format == "PDF":
-        uploaded_file = st.file_uploader(
-            "Charger le PDF des conditions bancaires",
-            type=["pdf"],
-            help="Uploadez le document des conditions générales de la banque",
-            key="pdf_uploader"
-        )
-        
-        if uploaded_file is not None:
-            try:
-                # Lire le PDF
-                pdf_reader = PyPDF2.PdfReader(io.BytesIO(uploaded_file.read()))
-                
-                # Extraire le texte
-                pdf_text = ""
-                for page in pdf_reader.pages:
-                    pdf_text += page.extract_text() + "\n"
-                
-                st.session_state.produits_bancaires_text = pdf_text
-                
-                st.success(f"✅ PDF chargé ! ({len(pdf_reader.pages)} pages)")
-                
-                # Aperçu
-                with st.expander("📄 Aperçu du contenu"):
-                    st.text(pdf_text[:800] + "...")
-                    
-            except Exception as e:
-                st.error(f"❌ Erreur lors de la lecture du PDF: {e}")
-    
-    else:  # Excel
-        uploaded_file = st.file_uploader(
-            "Charger le fichier Excel du catalogue produits",
-            type=["xlsx", "xls"],
-            help="Fichier Excel avec colonnes détaillées sur les produits bancaires",
-            key="excel_uploader"
-        )
-        
-        if uploaded_file is not None:
-            try:
-                # Lire le fichier Excel
-                df_produits = pd.read_excel(uploaded_file)
-                
-                st.success(f"✅ Excel chargé ! ({len(df_produits)} produits)")
-                st.info(f"📊 Colonnes détectées: {', '.join(df_produits.columns.tolist())}")
-                
-                # Aperçu des données
-                with st.expander("📊 Aperçu des produits"):
-                    st.dataframe(df_produits.head(10), use_container_width=True)
-                
-                # Convertir en texte structuré
-                catalogue_text = "CATALOGUE PRODUITS BANCAIRES (DÉTAILLÉ):\n\n"
-                
-                for idx, row in df_produits.iterrows():
-                    catalogue_text += f"--- PRODUIT {idx + 1} ---\n"
-                    for col in df_produits.columns:
-                        value = str(row[col])
-                        # Nettoyer les valeurs NaN
-                        if value.lower() != 'nan':
-                            catalogue_text += f"{col}: {value}\n"
-                    catalogue_text += "\n"
-                
-                st.session_state.produits_bancaires_text = catalogue_text
-                
-            except Exception as e:
-                st.error(f"❌ Erreur lors de la lecture du fichier Excel: {e}")
-                st.info("Vérifiez que le fichier Excel est valide et contient des données")
+    if uploaded_excel is not None:
+        try:
+            # Lire le fichier Excel
+            df_produits = pd.read_excel(uploaded_excel)
+            
+            st.success(f"✅ Excel chargé ! ({len(df_produits)} produits)")
+            st.info(f"📊 Colonnes détectées: {', '.join(df_produits.columns.tolist())}")
+            
+            # Aperçu des données
+            with st.expander("📊 Aperçu des produits"):
+                st.dataframe(df_produits.head(10), use_container_width=True)
+            
+            # Convertir en texte structuré
+            catalogue_text = "CATALOGUE PRODUITS BANCAIRES (DÉTAILLÉ):\n\n"
+            
+            for idx, row in df_produits.iterrows():
+                catalogue_text += f"--- PRODUIT {idx + 1} ---\n"
+                for col in df_produits.columns:
+                    value = str(row[col])
+                    # Nettoyer les valeurs NaN
+                    if value.lower() != 'nan':
+                        catalogue_text += f"{col}: {value}\n"
+                catalogue_text += "\n"
+            
+            st.session_state.produits_bancaires_text = catalogue_text
+            
+        except Exception as e:
+            st.error(f"❌ Erreur lors de la lecture du fichier Excel: {e}")
+            st.info("Vérifiez que le fichier Excel est valide et contient des données")
     
     # Statut du catalogue
     if st.session_state.produits_bancaires_text:
@@ -153,7 +114,7 @@ with st.sidebar:
             st.rerun()
     else:
         st.warning("⚠️ Aucun catalogue chargé")
-        st.caption("Les personas seront générés sans recommandations de produits spécifiques")
+        st.caption("Uploadez un fichier Excel avec les informations détaillées sur les produits bancaires")
     
     st.divider()
 
@@ -461,14 +422,22 @@ with tab1:
         uploaded_file = st.file_uploader("Chargez un fichier CSV avec vos segments", type="csv")
         
         if uploaded_file is not None:
-            df = pd.read_csv(uploaded_file)
-            st.session_state.loaded_segments = df.to_dict('records')
-            st.dataframe(df, use_container_width=True)
-            st.success("✅ Fichier chargé avec succès!")
-            current_segments = st.session_state.loaded_segments
+            try:
+                df = pd.read_csv(uploaded_file)
+                st.session_state.loaded_segments = df.to_dict('records')
+                st.dataframe(df, use_container_width=True)
+                st.success("✅ Fichier chargé avec succès!")
+                current_segments = st.session_state.loaded_segments
+            except Exception as e:
+                st.error(f"❌ Erreur lors du chargement du CSV: {e}")
+                current_segments = []
         else:
-            st.info("💡 Veuillez charger un fichier CSV pour continuer")
-            current_segments = []
+            if st.session_state.loaded_segments:
+                current_segments = st.session_state.loaded_segments
+                st.info(f"💡 {len(current_segments)} segments chargés en mémoire")
+            else:
+                st.info("💡 Veuillez charger un fichier CSV pour continuer")
+                current_segments = []
     else:
         current_segments = segments_data
     
@@ -517,16 +486,53 @@ with tab2:
                 progress_bar = st.progress(0)
                 status_text = st.empty()
                 
-                for idx, (seg_id, _) in enumerate(selected_segments):
-                    segment = next((s for s in segments_to_use if s.get("id", -1) == seg_id), None)
-                    if segment:
-                        status_text.text(f"Génération du Cluster {seg_id}...")
-                        
-                        generate_persona(segment, llm_model)
-                        
-                        progress_bar.progress((idx + 1) / len(selected_segments))
+                success_count = 0
+                error_count = 0
+                errors_details = []
                 
-                st.success("✅ Tous les personas ont été générés!")
+                for idx, (seg_id, seg_name) in enumerate(selected_segments):
+                    segment = next((s for s in segments_to_use if s.get("id", -1) == seg_id), None)
+                    
+                    if segment:
+                        status_text.text(f"⏳ Génération du Cluster {seg_id}: {seg_name[:30]}...")
+                        
+                        try:
+                            result = generate_persona(segment, llm_model)
+                            
+                            if result:
+                                success_count += 1
+                                status_text.success(f"✅ Cluster {seg_id} généré avec succès!")
+                            else:
+                                error_count += 1
+                                errors_details.append(f"Cluster {seg_id}: Échec de génération (résultat vide)")
+                                status_text.error(f"❌ Échec pour Cluster {seg_id}")
+                        
+                        except Exception as e:
+                            error_count += 1
+                            errors_details.append(f"Cluster {seg_id}: {str(e)}")
+                            status_text.error(f"❌ Erreur pour Cluster {seg_id}: {str(e)}")
+                    else:
+                        error_count += 1
+                        errors_details.append(f"Cluster {seg_id}: Segment non trouvé")
+                        status_text.error(f"❌ Cluster {seg_id} non trouvé dans les données")
+                    
+                    progress_bar.progress((idx + 1) / len(selected_segments))
+                
+                # Résumé final
+                status_text.empty()
+                
+                if success_count > 0:
+                    st.success(f"✅ {success_count} persona(s) généré(s) avec succès!")
+                
+                if error_count > 0:
+                    st.error(f"❌ {error_count} échec(s) de génération")
+                    
+                    with st.expander("📋 Détails des erreurs"):
+                        for error in errors_details:
+                            st.write(f"• {error}")
+                
+                if success_count == 0 and error_count > 0:
+                    st.warning("⚠️ Aucun persona n'a été généré. Vérifiez les erreurs ci-dessus.")
     
     with col2:
         if st.session_state.personas:
