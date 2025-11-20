@@ -8,7 +8,6 @@ import streamlit as st
 import pandas as pd
 import json
 from openai import OpenAI
-import PyPDF2
 import io
 
 from reportlab.lib.pagesizes import A4
@@ -87,40 +86,48 @@ with st.sidebar:
     
     st.header("Catalogue Produits")
     
-    uploaded_pdf = st.file_uploader(
-        "Charger le PDF des conditions bancaires",
-        type=["pdf"],
-        help="Uploadez le document des conditions generales de la banque"
+    uploaded_excel = st.file_uploader(
+        "Charger le fichier Excel du catalogue produits",
+        type=["xlsx", "xls"],
+        help="Fichier Excel avec colonnes detaillees sur les produits bancaires"
     )
     
-    if uploaded_pdf is not None:
+    if uploaded_excel is not None:
         try:
-            pdf_reader = PyPDF2.PdfReader(io.BytesIO(uploaded_pdf.read()))
+            df_produits = pd.read_excel(uploaded_excel)
             
-            pdf_text = ""
-            for page in pdf_reader.pages:
-                page_text = page.extract_text()
-                # Nettoyer le texte des caracteres problematiques
-                if page_text:
-                    pdf_text += page_text.encode('ascii', 'ignore').decode('ascii') + "\n"
+            st.success(f"Excel charge ! ({len(df_produits)} produits)")
+            st.info(f"Colonnes detectees: {', '.join(df_produits.columns.tolist())}")
             
-            st.session_state.produits_bancaires_text = pdf_text
+            with st.expander("Apercu des produits"):
+                st.dataframe(df_produits.head(10), use_container_width=True)
             
-            st.success(f"PDF charge ! ({len(pdf_reader.pages)} pages)")
+            # Convertir en texte structure
+            catalogue_text = "CATALOGUE PRODUITS BANCAIRES (DETAILLE):\n\n"
             
-            with st.expander("Apercu du contenu"):
-                st.text(pdf_text[:800] + "...")
-                
+            for idx, row in df_produits.iterrows():
+                catalogue_text += f"--- PRODUIT {idx + 1} ---\n"
+                for col in df_produits.columns:
+                    value = str(row[col])
+                    # Nettoyer les caracteres problematiques
+                    value_clean = value.encode('ascii', 'ignore').decode('ascii')
+                    catalogue_text += f"{col}: {value_clean}\n"
+                catalogue_text += "\n"
+            
+            st.session_state.produits_bancaires_text = catalogue_text
+            
         except Exception as e:
-            st.error(f"Erreur lors de la lecture du PDF: {e}")
+            st.error(f"Erreur lors de la lecture du fichier Excel: {e}")
+            st.info("Verifiez que le fichier Excel est valide et contient des donnees")
     
-    elif st.session_state.produits_bancaires_text:
+    if st.session_state.produits_bancaires_text:
         st.info("Catalogue produits charge en memoire")
         if st.button("Supprimer le catalogue"):
             st.session_state.produits_bancaires_text = None
             st.rerun()
     else:
         st.warning("Aucun catalogue charge")
+        st.caption("Uploadez un fichier Excel avec les informations detaillees sur les produits bancaires")
     
     st.divider()
     
@@ -221,8 +228,8 @@ Email accessibility: {clean_segment.get('emailAccess', 'N/A')}
 Main characteristics: {clean_segment.get('characteristics', 'N/A')}"""
 
     if st.session_state.produits_bancaires_text:
-        # Nettoyer le texte du PDF
-        clean_pdf = clean_text(st.session_state.produits_bancaires_text[:8000])
+        # Nettoyer le texte du catalogue
+        clean_pdf = clean_text(st.session_state.produits_bancaires_text[:10000])
         
         produits_info = f"""
 
@@ -251,11 +258,18 @@ To recommend the most suitable products for this segment, analyze ALL the follow
    - {clean_segment.get('characteristics', 'N/A')}
    - Identify: professional status, stability, specific needs
 
+5. PRODUCT RECOMMENDATION LOGIC (DO NOT BASE ONLY ON PRICE):
+   - Match products with ACTUAL NEEDS based on the detailed catalog
+   - Consider target segments mentioned in the catalog
+   - Analyze product characteristics vs segment profile
+   - Justify recommendations with specific catalog details
+
 IMPORTANT:
 - NEVER recommend a product only because it is expensive or prestigious
 - ALWAYS justify based on REAL NEEDS of the segment
 - Consider QUALITY-PRICE RATIO and ADEQUACY to uses
-- Identify GAPS (missing products despite the need)"""
+- Identify GAPS (missing products despite the need)
+- Reference specific product details from the catalog"""
     else:
         produits_info = "\n\nNote: No product catalog loaded. Make general recommendations based on segment characteristics."
     
@@ -275,6 +289,7 @@ Provide a professional description in FRENCH including:
    - Specific need covered
    - Adequacy with profile (age, income, connectivity, etc.)
    - Exact price from catalog
+   - Why this product matches vs alternatives
    
    Structure:
    A. Priority Products (High priority)
@@ -283,7 +298,7 @@ Provide a professional description in FRENCH including:
 
 7. UNIQUE VALUE PROPOSITION
 
-Format: Use clear sections with bold titles. Write in FRENCH."""
+Format: Use clear sections with bold titles. Write everything in FRENCH."""
     
     return prompt
 
@@ -392,7 +407,7 @@ def generate_persona(segment, model):
         
         message = st.session_state.client.chat.completions.create(
             model=model,
-            max_tokens=2500,
+            max_tokens=3000,
             messages=[
                 {"role": "user", "content": prompt}
             ]
@@ -431,12 +446,11 @@ with tab1:
                 # Convertir en liste de dictionnaires
                 segments_from_csv = df.to_dict('records')
                 
-                # Normaliser les noms de colonnes (enlever espaces, accents)
+                # Normaliser les noms de colonnes
                 normalized_segments = []
                 for seg in segments_from_csv:
                     normalized_seg = {}
                     for key, value in seg.items():
-                        # Normaliser les noms de colonnes
                         clean_key = key.strip().lower()
                         if 'id' in clean_key:
                             normalized_seg['id'] = value
@@ -457,7 +471,6 @@ with tab1:
                         elif 'caract' in clean_key or 'character' in clean_key:
                             normalized_seg['characteristics'] = value
                         else:
-                            # Garder les colonnes non reconnues
                             normalized_seg[clean_key] = value
                     
                     normalized_segments.append(normalized_seg)
@@ -467,7 +480,6 @@ with tab1:
                 st.success(f"Fichier charge avec succes! ({len(normalized_segments)} segments)")
                 st.dataframe(df, use_container_width=True)
                 
-                # Afficher les colonnes reconnues
                 with st.expander("Colonnes detectees"):
                     st.write("Colonnes du CSV:", df.columns.tolist())
                     if normalized_segments:
