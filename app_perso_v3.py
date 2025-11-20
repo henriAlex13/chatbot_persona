@@ -1,29 +1,26 @@
-# -*- coding: utf-8 -*-
-"""
-Generateur de Personas Marketing
-Societe Generale Cote d'Ivoire
-"""
-
 import streamlit as st
 import pandas as pd
 import json
-from openai import OpenAI
+import PyPDF2
 import io
-
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-from reportlab.lib.enums import TA_JUSTIFY, TA_CENTER
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
+from reportlab.lib.enums import TA_JUSTIFY, TA_LEFT, TA_CENTER
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from services.socgenai_models import llm_model, UPLOAD_DIRECTORY
+from langchain.schema import HumanMessage, SystemMessage, AIMessage
 
 # Configuration Streamlit
 st.set_page_config(
-    page_title="Generateur de Personas Marketing",
+    page_title="Générateur de Personas Marketing",
     page_icon="🎯",
     layout="wide"
 )
 
-# CSS personnalise
+# CSS personnalisé
 st.markdown("""
     <style>
     .header {
@@ -52,14 +49,14 @@ st.markdown("""
 # Header
 st.markdown("""
     <div class="header">
-        <h1>🎯 Generateur de Personas Marketing</h1>
-        <p>Generez automatiquement des descriptions de personas pour chaque segment client</p>
+        <h1>🎯 Générateur de Personas Marketing</h1>
+        <p>Générez automatiquement des descriptions de personas pour chaque segment client</p>
     </div>
 """, unsafe_allow_html=True)
 
 # Initialiser la session
-if "client" not in st.session_state:
-    st.session_state.client = None
+if "llm" not in st.session_state:
+    st.session_state.llm = None
 if "personas" not in st.session_state:
     st.session_state.personas = {}
 if "conversation_history" not in st.session_state:
@@ -71,89 +68,107 @@ if "loaded_segments" not in st.session_state:
 
 # Sidebar - Configuration
 with st.sidebar:
-    st.header("Configuration")
+   
+    st.header("📄 Catalogue Produits")
     
-    api_key = st.text_input("Cle API OpenAI", type="password", key="api_key")
-    
-    if api_key and st.session_state.client is None:
-        try:
-            st.session_state.client = OpenAI(api_key=api_key)
-            st.success("Connecte a OpenAI !")
-        except Exception as e:
-            st.error(f"Erreur de connexion: {e}")
-    
-    st.divider()
-    
-    st.header("Catalogue Produits")
-    
-    uploaded_excel = st.file_uploader(
-        "Charger le fichier Excel du catalogue produits",
-        type=["xlsx", "xls"],
-        help="Fichier Excel avec colonnes detaillees sur les produits bancaires"
+    # Choix du format
+    file_format = st.radio(
+        "Format du catalogue",
+        ["PDF", "Excel"],
+        horizontal=True
     )
     
-    if uploaded_excel is not None:
-        try:
-            df_produits = pd.read_excel(uploaded_excel)
-            
-            st.success(f"Excel charge ! ({len(df_produits)} produits)")
-            st.info(f"Colonnes detectees: {', '.join(df_produits.columns.tolist())}")
-            
-            with st.expander("Apercu des produits"):
-                st.dataframe(df_produits.head(10), use_container_width=True)
-            
-            # Convertir en texte structure
-            catalogue_text = "CATALOGUE PRODUITS BANCAIRES (DETAILLE):\n\n"
-            
-            for idx, row in df_produits.iterrows():
-                catalogue_text += f"--- PRODUIT {idx + 1} ---\n"
-                for col in df_produits.columns:
-                    value = str(row[col])
-                    # Nettoyer les caracteres problematiques
-                    value_clean = value.encode('ascii', 'ignore').decode('ascii')
-                    catalogue_text += f"{col}: {value_clean}\n"
-                catalogue_text += "\n"
-            
-            st.session_state.produits_bancaires_text = catalogue_text
-            
-        except Exception as e:
-            st.error(f"Erreur lors de la lecture du fichier Excel: {e}")
-            st.info("Verifiez que le fichier Excel est valide et contient des donnees")
+    if file_format == "PDF":
+        uploaded_file = st.file_uploader(
+            "Charger le PDF des conditions bancaires",
+            type=["pdf"],
+            help="Uploadez le document des conditions générales de la banque",
+            key="pdf_uploader"
+        )
+        
+        if uploaded_file is not None:
+            try:
+                # Lire le PDF
+                pdf_reader = PyPDF2.PdfReader(io.BytesIO(uploaded_file.read()))
+                
+                # Extraire le texte
+                pdf_text = ""
+                for page in pdf_reader.pages:
+                    pdf_text += page.extract_text() + "\n"
+                
+                st.session_state.produits_bancaires_text = pdf_text
+                
+                st.success(f"✅ PDF chargé ! ({len(pdf_reader.pages)} pages)")
+                
+                # Aperçu
+                with st.expander("📄 Aperçu du contenu"):
+                    st.text(pdf_text[:800] + "...")
+                    
+            except Exception as e:
+                st.error(f"❌ Erreur lors de la lecture du PDF: {e}")
     
+    else:  # Excel
+        uploaded_file = st.file_uploader(
+            "Charger le fichier Excel du catalogue produits",
+            type=["xlsx", "xls"],
+            help="Fichier Excel avec colonnes détaillées sur les produits bancaires",
+            key="excel_uploader"
+        )
+        
+        if uploaded_file is not None:
+            try:
+                # Lire le fichier Excel
+                df_produits = pd.read_excel(uploaded_file)
+                
+                st.success(f"✅ Excel chargé ! ({len(df_produits)} produits)")
+                st.info(f"📊 Colonnes détectées: {', '.join(df_produits.columns.tolist())}")
+                
+                # Aperçu des données
+                with st.expander("📊 Aperçu des produits"):
+                    st.dataframe(df_produits.head(10), use_container_width=True)
+                
+                # Convertir en texte structuré
+                catalogue_text = "CATALOGUE PRODUITS BANCAIRES (DÉTAILLÉ):\n\n"
+                
+                for idx, row in df_produits.iterrows():
+                    catalogue_text += f"--- PRODUIT {idx + 1} ---\n"
+                    for col in df_produits.columns:
+                        value = str(row[col])
+                        # Nettoyer les valeurs NaN
+                        if value.lower() != 'nan':
+                            catalogue_text += f"{col}: {value}\n"
+                    catalogue_text += "\n"
+                
+                st.session_state.produits_bancaires_text = catalogue_text
+                
+            except Exception as e:
+                st.error(f"❌ Erreur lors de la lecture du fichier Excel: {e}")
+                st.info("Vérifiez que le fichier Excel est valide et contient des données")
+    
+    # Statut du catalogue
     if st.session_state.produits_bancaires_text:
-        st.info("Catalogue produits charge en memoire")
-        if st.button("Supprimer le catalogue"):
+        st.info("✅ Catalogue produits chargé en mémoire")
+        if st.button("🗑️ Supprimer le catalogue"):
             st.session_state.produits_bancaires_text = None
             st.rerun()
     else:
-        st.warning("Aucun catalogue charge")
-        st.caption("Uploadez un fichier Excel avec les informations detaillees sur les produits bancaires")
+        st.warning("⚠️ Aucun catalogue chargé")
+        st.caption("Les personas seront générés sans recommandations de produits spécifiques")
     
     st.divider()
-    
-    st.header("Options")
-    
-    model_choice = st.selectbox(
-        "Modele OpenAI",
-        ["gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo"],
-        index=0
-    )
-    
-    st.divider()
-    st.info("Configurez votre cle API OpenAI et chargez le catalogue produits pour commencer")
 
-# Donnees des segments par defaut
+# Données des segments par défaut
 segments_data = [
     {
         "id": 0,
-        "name": "Les clients fideles et hyper-connectes",
+        "name": "Les clients fidèles et hyper-connectés",
         "age": 40,
         "nbProducts": 8,
         "revenueHommes": "100 000 - 200 000 FCFA",
         "revenueFemmes": "100 000 - 200 000 FCFA",
         "mobileAccess": "99%",
         "emailAccess": "85%",
-        "characteristics": "Maturite professionnelle, clients de base stable"
+        "characteristics": "Maturité professionnelle, clients de base stable"
     },
     {
         "id": 1,
@@ -175,7 +190,7 @@ segments_data = [
         "revenueFemmes": "0 - 100 000 FCFA",
         "mobileAccess": "98%",
         "emailAccess": "60%",
-        "characteristics": "En transition professionnelle, hyper-connectes"
+        "characteristics": "En transition professionnelle, hyper-connectés"
     },
     {
         "id": 3,
@@ -190,122 +205,122 @@ segments_data = [
     },
     {
         "id": 4,
-        "name": "Les fideles discrets",
+        "name": "Les fidèles discrets",
         "age": 41,
         "nbProducts": 3,
         "revenueHommes": "0 - 100 000 FCFA",
         "revenueFemmes": "0 - 100 000 FCFA",
         "mobileAccess": "98%",
         "emailAccess": "N/A",
-        "characteristics": "Employes stables, utilisation minimale"
+        "characteristics": "Employés stables, utilisation minimale"
     }
 ]
 
-def clean_text(text):
-    """Nettoie le texte des caracteres problematiques"""
-    if text is None:
-        return "N/A"
-    try:
-        return str(text).encode('ascii', 'ignore').decode('ascii')
-    except:
-        return str(text)
-
 def create_prompt(segment):
-    """Construit le prompt pour OpenAI avec gestion d'encodage"""
-    
-    # Nettoyer toutes les valeurs du segment
-    clean_segment = {k: clean_text(v) for k, v in segment.items()}
-    
-    base_info = f"""Generate a complete and detailed description of a marketing persona for a banking segment with the following characteristics:
+    base_info = f"""Génère une description complète et détaillée d'une persona marketing pour un segment bancaire avec les caractéristiques suivantes:
 
-Segment name: {clean_segment.get('name', 'N/A')}
-Average age: {clean_segment.get('age', 'N/A')} years
-Number of products used: {clean_segment.get('nbProducts', 'N/A')}
-Monthly income (Men): {clean_segment.get('revenueHommes', 'N/A')}
-Monthly income (Women): {clean_segment.get('revenueFemmes', 'N/A')}
-Mobile accessibility: {clean_segment.get('mobileAccess', 'N/A')}
-Email accessibility: {clean_segment.get('emailAccess', 'N/A')}
-Main characteristics: {clean_segment.get('characteristics', 'N/A')}"""
+Nom du segment: {segment.get('name', 'N/A')}
+Âge moyen: {segment.get('age', 'N/A')} ans
+Nombre de produits utilisés: {segment.get('nbProducts', 'N/A')}
+Revenu mensuel (Hommes): {segment.get('revenueHommes', 'N/A')}
+Revenu mensuel (Femmes): {segment.get('revenueFemmes', 'N/A')}
+Accessibilité mobile: {segment.get('mobileAccess', 'N/A')}
+Accessibilité email: {segment.get('emailAccess', 'N/A')}
+Caractéristiques principales: {segment.get('characteristics', 'N/A')}"""
 
     if st.session_state.produits_bancaires_text:
-        # Nettoyer le texte du catalogue
-        clean_pdf = clean_text(st.session_state.produits_bancaires_text[:10000])
-        
         produits_info = f"""
 
-AVAILABLE BANKING PRODUCTS CATALOG:
-{clean_pdf}
+CATALOGUE DES PRODUITS BANCAIRES DISPONIBLES:
+{st.session_state.produits_bancaires_text[:10000]}
 
-RECOMMENDATION METHODOLOGY:
-To recommend the most suitable products for this segment, analyze ALL the following criteria:
+MÉTHODOLOGIE DE RECOMMANDATION:
+Pour recommander les produits les plus adaptés à ce segment, analyse TOUS les critères suivants:
 
-1. DEMOGRAPHIC PROFILE:
-   - Average age ({clean_segment.get('age', 'N/A')} years) -> Needs according to life stage
-   - Men/women income -> Financial capacity AND gender disparities
+1. PROFIL DÉMOGRAPHIQUE:
+   - Âge moyen ({segment.get('age', 'N/A')} ans) -> Besoins selon le stade de vie
+   - Revenus hommes/femmes -> Capacité financière ET disparités de genre
    
-2. BANKING BEHAVIOR:
-   - Current number of products ({clean_segment.get('nbProducts', 'N/A')}) -> Banking sophistication
-   - If low (< 5) -> Under-banked segment, needs simple products
-   - If high (> 8) -> Mature segment, needs premium services
+2. COMPORTEMENT BANCAIRE:
+   - Nombre de produits actuels ({segment.get('nbProducts', 'N/A')}) -> Sophistication bancaire
+   - Si faible (< 5) -> Segment sous-bancarisé, besoin de produits simples
+   - Si élevé (> 8) -> Segment mature, besoin de services premium
    
-3. DIGITAL CONNECTIVITY:
-   - Mobile accessibility ({clean_segment.get('mobileAccess', 'N/A')}) -> Digital appetite
-   - Email accessibility ({clean_segment.get('emailAccess', 'N/A')}) -> Preferred communication channels
-   - If > 95% mobile -> Favor digital services (Mobile app, online banking)
-   - If < 80% mobile -> Favor traditional services (branch, phone)
+3. CONNECTIVITÉ DIGITALE:
+   - Accessibilité mobile ({segment.get('mobileAccess', 'N/A')}) -> Appétence digitale
+   - Accessibilité email ({segment.get('emailAccess', 'N/A')}) -> Canaux de communication préférés
+   - Si > 95% mobile -> Favoriser services digitaux (App mobile, banque en ligne)
+   - Si < 80% mobile -> Favoriser services traditionnels (agence, téléphone)
    
-4. SOCIO-PROFESSIONAL CHARACTERISTICS:
-   - {clean_segment.get('characteristics', 'N/A')}
-   - Identify: professional status, stability, specific needs
+4. CARACTÉRISTIQUES SOCIO-PROFESSIONNELLES:
+   - {segment.get('characteristics', 'N/A')}
+   - Identifier: statut professionnel, stabilité, besoins spécifiques
 
-5. PRODUCT RECOMMENDATION LOGIC (DO NOT BASE ONLY ON PRICE):
-   - Match products with ACTUAL NEEDS based on the detailed catalog
-   - Consider target segments mentioned in the catalog
-   - Analyze product characteristics vs segment profile
-   - Justify recommendations with specific catalog details
+5. LOGIQUE DE RECOMMANDATION PRODUITS (NE PAS SE BASER UNIQUEMENT SUR LE PRIX):
+   - Matcher les produits avec les BESOINS RÉELS basés sur le catalogue détaillé
+   - Considérer les segments cibles mentionnés dans le catalogue
+   - Analyser les caractéristiques produits vs profil segment
+   - Justifier les recommandations avec des détails spécifiques du catalogue
 
 IMPORTANT:
-- NEVER recommend a product only because it is expensive or prestigious
-- ALWAYS justify based on REAL NEEDS of the segment
-- Consider QUALITY-PRICE RATIO and ADEQUACY to uses
-- Identify GAPS (missing products despite the need)
-- Reference specific product details from the catalog"""
+- NE JAMAIS recommander un produit uniquement parce qu'il est cher ou prestigieux
+- TOUJOURS justifier en se basant sur les BESOINS RÉELS du segment
+- Considérer le RAPPORT QUALITÉ-PRIX et l'ADÉQUATION aux usages
+- Identifier les GAPS (produits manquants malgré le besoin)
+- Référencer les détails spécifiques des produits du catalogue"""
+        
+        recommendation_note = """
+- RECOMMANDATIONS DE PRODUITS BANCAIRES :
+  
+  **A. ANALYSE DES BESOINS**
+  Basée sur l'analyse complète du segment (âge, nombre de produits, revenu, accessibilité digitale, caractéristiques comportementales), identifie les BESOINS PRIORITAIRES de ce segment.
+  
+  **B. PRODUITS RECOMMANDÉS DU CATALOGUE**
+  Pour CHAQUE produit recommandé, justifie en citant:
+   - Les caractéristiques du segment qui le justifient
+   - Le besoin spécifique couvert
+   - L'adéquation avec le profil (âge, revenu, connectivité, etc.)
+   - Le prix exact du catalogue
+   - Pourquoi ce produit correspond vs les alternatives
+   
+   Structure:
+   • Produits Prioritaires (Haute priorité)
+   • Produits Complémentaires (Priorité moyenne)
+   • Produits de Développement (Long terme)"""
     else:
-        produits_info = "\n\nNote: No product catalog loaded. Make general recommendations based on segment characteristics."
+        produits_info = ""
+        recommendation_note = """
+- RECOMMANDATIONS DE PRODUITS BANCAIRES :
+  
+  **A. PROPOSITION GÉNÉRALE**
+  Basée sur l'analyse complète du segment (âge, nombre de produits, revenu, accessibilité digitale, caractéristiques comportementales), propose des CATÉGORIES de produits bancaires adaptés. Justifie chaque recommandation par la synthèse des critères de segmentation.
+  
+  Note: Aucun catalogue produits chargé, donc pas de proposition spécifique avec prix."""
     
     prompt = base_info + produits_info + """
 
-Provide a professional description in FRENCH including:
+Fournis une description professionnelle en FRANÇAIS incluant:
 
-1. DETAILED DEMOGRAPHIC PROFILE
-2. BANKING BEHAVIORS AND PATTERNS
-3. NEEDS AND PREFERENCES
-4. MOTIVATIONS AND PAIN POINTS
-5. RECOMMENDED MARKETING STRATEGY
-6. ADAPTED BANKING PRODUCT RECOMMENDATIONS
-   
-   For EACH recommended product, justify by citing:
-   - Segment characteristics that justify it
-   - Specific need covered
-   - Adequacy with profile (age, income, connectivity, etc.)
-   - Exact price from catalog
-   - Why this product matches vs alternatives
-   
-   Structure:
-   A. Priority Products (High priority)
-   B. Complementary Products (Medium priority)
-   C. Development Products (Long term)
+1. PROFIL DÉMOGRAPHIQUE DÉTAILLÉ
+2. COMPORTEMENTS ET PATTERNS BANCAIRES
+3. BESOINS ET PRÉFÉRENCES
+4. MOTIVATIONS ET PAIN POINTS
+5. STRATÉGIE MARKETING RECOMMANDÉE""" + recommendation_note + """
 
-7. UNIQUE VALUE PROPOSITION
+7. PROPOSITION DE VALEUR UNIQUE
 
-Format: Use clear sections with bold titles. Write everything in FRENCH."""
+Format: Utilise des sections claires avec des titres en gras. Rédige tout en FRANÇAIS."""
     
     return prompt
 
+
 def generate_persona_pdf(persona_id, persona_content, segment_name):
-    """Genere un PDF formate pour un persona"""
+    """
+    Génère un PDF formaté pour un persona
+    """
     buffer = io.BytesIO()
     
+    # Créer le document PDF
     doc = SimpleDocTemplate(
         buffer,
         pagesize=A4,
@@ -315,8 +330,10 @@ def generate_persona_pdf(persona_id, persona_content, segment_name):
         bottomMargin=2*cm
     )
     
+    # Styles
     styles = getSampleStyleSheet()
     
+    # Style personnalisé pour le titre
     title_style = ParagraphStyle(
         'CustomTitle',
         parent=styles['Heading1'],
@@ -326,6 +343,7 @@ def generate_persona_pdf(persona_id, persona_content, segment_name):
         alignment=TA_CENTER
     )
     
+    # Style pour les sous-titres
     heading_style = ParagraphStyle(
         'CustomHeading',
         parent=styles['Heading2'],
@@ -335,6 +353,7 @@ def generate_persona_pdf(persona_id, persona_content, segment_name):
         spaceBefore=12
     )
     
+    # Style pour le texte normal
     normal_style = ParagraphStyle(
         'CustomNormal',
         parent=styles['Normal'],
@@ -343,17 +362,16 @@ def generate_persona_pdf(persona_id, persona_content, segment_name):
         spaceAfter=10
     )
     
+    # Contenu du PDF
     story = []
     
-    # Nettoyer le contenu
-    clean_content = clean_text(persona_content)
-    clean_name = clean_text(segment_name)
-    
-    story.append(Paragraph("PERSONA MARKETING", title_style))
-    story.append(Paragraph(f"Cluster {persona_id}: {clean_name}", heading_style))
+    # Titre
+    story.append(Paragraph(f"PERSONA MARKETING", title_style))
+    story.append(Paragraph(f"Cluster {persona_id}: {segment_name}", heading_style))
     story.append(Spacer(1, 0.5*cm))
     
-    lines = clean_content.split('\n')
+    # Convertir le contenu markdown en paragraphes PDF
+    lines = persona_content.split('\n')
     
     for line in lines:
         line = line.strip()
@@ -361,6 +379,7 @@ def generate_persona_pdf(persona_id, persona_content, segment_name):
             story.append(Spacer(1, 0.3*cm))
             continue
         
+        # Détection des titres (lignes avec **)
         if line.startswith('**') and line.endswith('**'):
             title_text = line.replace('**', '')
             story.append(Paragraph(title_text, heading_style))
@@ -373,14 +392,17 @@ def generate_persona_pdf(persona_id, persona_content, segment_name):
         elif line.startswith('#'):
             title_text = line.replace('#', '').strip()
             story.append(Paragraph(title_text, heading_style))
-        elif line.startswith('- ') or line.startswith('* '):
+        elif line.startswith('- ') or line.startswith('• '):
+            # Liste à puces
             text = line[2:].strip()
-            story.append(Paragraph(f"- {text}", normal_style))
+            story.append(Paragraph(f"• {text}", normal_style))
         else:
+            # Texte normal - nettoyer le markdown basique
             text = line.replace('**', '')
             if text:
                 story.append(Paragraph(text, normal_style))
     
+    # Footer
     story.append(Spacer(1, 1*cm))
     footer_style = ParagraphStyle(
         'Footer',
@@ -389,137 +411,88 @@ def generate_persona_pdf(persona_id, persona_content, segment_name):
         textColor='gray',
         alignment=TA_CENTER
     )
-    story.append(Paragraph("Genere par le Generateur de Personas Marketing - Societe Generale Cote d'Ivoire", footer_style))
+    story.append(Paragraph("Généré par le Générateur de Personas Marketing - Société Générale Côte d'Ivoire", footer_style))
     
+    # Générer le PDF
     doc.build(story)
     
     buffer.seek(0)
     return buffer
 
 def generate_persona(segment, model):
-    """Genere un persona avec OpenAI"""
-    if st.session_state.client is None:
-        st.error("Veuillez d'abord configurer votre cle API OpenAI dans la barre laterale.")
-        return None
+    """
+    Génère un persona avec les LLM
+    """
+    st.session_state.llm = llm_model
+    
+    prompt = create_prompt(segment)
     
     try:
-        prompt = create_prompt(segment)
+        # Utilisation de invoke avec LangChain
+        messages = [HumanMessage(content=prompt)]
+        response = st.session_state.llm.invoke(messages)
         
-        message = st.session_state.client.chat.completions.create(
-            model=model,
-            max_tokens=3000,
-            messages=[
-                {"role": "user", "content": prompt}
-            ]
-        )
+        # Récupérer le contenu de la réponse
+        persona_content = response
         
-        result = message.choices[0].message.content
-        st.session_state.personas[segment.get("id", 0)] = result
-        return result
+        st.session_state.personas[segment.get("id", 0)] = persona_content
+        return persona_content
     
     except Exception as e:
-        st.error(f"Erreur lors de la generation: {str(e)}")
+        st.error(f"❌ Erreur lors de la génération: {e}")
         return None
 
 # Onglets principaux
-tab1, tab2, tab3 = st.tabs(["Segments", "Generer Personas", "Chat Intelligent"])
+tab1, tab2, tab3 = st.tabs(["📋 Segments", "🎯 Générer Personas", "💬 Chat Intelligent"])
 
 # TAB 1 - SEGMENTS
 with tab1:
     st.subheader("Segments Clients Disponibles")
     
     data_source = st.radio(
-        "Source de donnees",
-        ["Donnees par defaut", "Charger un CSV personnalise"],
+        "Source de données",
+        ["Données par défaut", "Charger un CSV personnalisé"],
         index=0
     )
     
-    if data_source == "Charger un CSV personnalise":
+    if data_source == "Charger un CSV personnalisé":
         st.divider()
-        st.subheader("Charger vos propres donnees")
-        uploaded_file = st.file_uploader("Chargez un fichier CSV avec vos segments", type="csv", key="csv_uploader")
+        st.subheader("📤 Charger vos propres données")
+        uploaded_file = st.file_uploader("Chargez un fichier CSV avec vos segments", type="csv")
         
         if uploaded_file is not None:
-            try:
-                df = pd.read_csv(uploaded_file, encoding='utf-8')
-                
-                # Convertir en liste de dictionnaires
-                segments_from_csv = df.to_dict('records')
-                
-                # Normaliser les noms de colonnes
-                normalized_segments = []
-                for seg in segments_from_csv:
-                    normalized_seg = {}
-                    for key, value in seg.items():
-                        clean_key = key.strip().lower()
-                        if 'id' in clean_key:
-                            normalized_seg['id'] = value
-                        elif 'name' in clean_key or 'nom' in clean_key:
-                            normalized_seg['name'] = value
-                        elif 'age' in clean_key:
-                            normalized_seg['age'] = value
-                        elif 'product' in clean_key or 'produit' in clean_key:
-                            normalized_seg['nbProducts'] = value
-                        elif 'homme' in clean_key or 'male' in clean_key:
-                            normalized_seg['revenueHommes'] = value
-                        elif 'femme' in clean_key or 'female' in clean_key:
-                            normalized_seg['revenueFemmes'] = value
-                        elif 'mobile' in clean_key:
-                            normalized_seg['mobileAccess'] = value
-                        elif 'email' in clean_key or 'mail' in clean_key:
-                            normalized_seg['emailAccess'] = value
-                        elif 'caract' in clean_key or 'character' in clean_key:
-                            normalized_seg['characteristics'] = value
-                        else:
-                            normalized_seg[clean_key] = value
-                    
-                    normalized_segments.append(normalized_seg)
-                
-                st.session_state.loaded_segments = normalized_segments
-                
-                st.success(f"Fichier charge avec succes! ({len(normalized_segments)} segments)")
-                st.dataframe(df, use_container_width=True)
-                
-                with st.expander("Colonnes detectees"):
-                    st.write("Colonnes du CSV:", df.columns.tolist())
-                    if normalized_segments:
-                        st.write("Cles normalisees:", list(normalized_segments[0].keys()))
-                
-                current_segments = normalized_segments
-            except Exception as e:
-                st.error(f"Erreur lors du chargement du CSV: {e}")
-                current_segments = []
+            df = pd.read_csv(uploaded_file)
+            st.session_state.loaded_segments = df.to_dict('records')
+            st.dataframe(df, use_container_width=True)
+            st.success("✅ Fichier chargé avec succès!")
+            current_segments = st.session_state.loaded_segments
         else:
-            if st.session_state.loaded_segments:
-                current_segments = st.session_state.loaded_segments
-                st.info(f"{len(current_segments)} segments charges en memoire")
-            else:
-                st.info("Veuillez charger un fichier CSV pour continuer")
-                current_segments = []
+            st.info("💡 Veuillez charger un fichier CSV pour continuer")
+            current_segments = []
     else:
         current_segments = segments_data
     
     if current_segments:
         st.divider()
-        st.subheader("Segments a traiter")
+        st.subheader("Segments à traiter")
         cols = st.columns(2)
         for idx, segment in enumerate(current_segments):
             with cols[idx % 2]:
                 st.markdown(f"""
                 <div class="cluster-box">
-                    <h4>CLUSTER {segment.get('id', idx)}: {clean_text(segment.get('name', 'Sans nom'))}</h4>
-                    <p><b>Age moyen:</b> {segment.get('age', 'N/A')} ans</p>
+                    <h4>CLUSTER {segment.get('id', idx)}: {segment.get('name', 'Sans nom')}</h4>
+                    <p><b>Âge moyen:</b> {segment.get('age', 'N/A')} ans</p>
                     <p><b>Produits:</b> {segment.get('nbProducts', 'N/A')}</p>
-                    <p><b>Revenu Hommes:</b> {clean_text(segment.get('revenueHommes', 'N/A'))}</p>
-                    <p><b>Revenu Femmes:</b> {clean_text(segment.get('revenueFemmes', 'N/A'))}</p>
-                    <p><b>Acces Mobile:</b> {segment.get('mobileAccess', 'N/A')}</p>
-                    <p><b>Acces Email:</b> {segment.get('emailAccess', 'N/A')}</p>
+                    <p><b>Revenu Hommes:</b> {segment.get('revenueHommes', 'N/A')}</p>
+                    <p><b>Revenu Femmes:</b> {segment.get('revenueFemmes', 'N/A')}</p>
+                    <p><b>Accès Mobile:</b> {segment.get('mobileAccess', 'N/A')}</p>
+                    <p><b>Accès Email:</b> {segment.get('emailAccess', 'N/A')}</p>
                 </div>
                 """, unsafe_allow_html=True)
 
-# TAB 2 - GENERATION
+# TAB 2 - GÉNÉRATION
 with tab2:
-    st.subheader("Generer des Personas")
+    st.subheader("🎯 Générer des Personas")
     
     if "loaded_segments" in st.session_state and st.session_state.loaded_segments:
         segments_to_use = st.session_state.loaded_segments
@@ -531,15 +504,15 @@ with tab2:
     with col1:
         st.write("**Segments disponibles:**")
         selected_segments = st.multiselect(
-            "Selectionnez les segments a traiter",
-            options=[(s.get("id", idx), clean_text(s.get("name", f"Segment {idx}"))) for idx, s in enumerate(segments_to_use)],
+            "Sélectionnez les segments à traiter",
+            options=[(s.get("id", idx), s.get("name", f"Segment {idx}")) for idx, s in enumerate(segments_to_use)],
             format_func=lambda x: f"Cluster {x[0]}: {x[1][:30]}...",
-            default=[(segments_to_use[0].get("id", 0), clean_text(segments_to_use[0].get("name", "Segment 0")))]
+            default=[(segments_to_use[0].get("id", 0), segments_to_use[0].get("name", "Segment 0"))]
         )
         
-        if st.button("Generer les Personas", type="primary"):
+        if st.button("🚀 Générer les Personas", type="primary"):
             if not selected_segments:
-                st.warning("Selectionnez au moins un segment")
+                st.warning("⚠️ Sélectionnez au moins un segment")
             else:
                 progress_bar = st.progress(0)
                 status_text = st.empty()
@@ -547,20 +520,20 @@ with tab2:
                 for idx, (seg_id, _) in enumerate(selected_segments):
                     segment = next((s for s in segments_to_use if s.get("id", -1) == seg_id), None)
                     if segment:
-                        status_text.text(f"Generation du Cluster {seg_id}...")
+                        status_text.text(f"Génération du Cluster {seg_id}...")
                         
-                        generate_persona(segment, model_choice)
+                        generate_persona(segment, llm_model)
                         
                         progress_bar.progress((idx + 1) / len(selected_segments))
                 
-                st.success("Tous les personas ont ete generes!")
+                st.success("✅ Tous les personas ont été générés!")
     
     with col2:
         if st.session_state.personas:
-            st.write("**Personas generes:**")
+            st.write("**Personas générés:**")
             
             persona_options = [
-                f"Cluster {k}: {clean_text(next((s.get('name', 'Unknown') for s in segments_to_use if s.get('id', -1) == k), 'Unknown'))[:40]}..."
+                f"Cluster {k}: {next((s.get('name', 'Unknown') for s in segments_to_use if s.get('id', -1) == k), 'Unknown')[:40]}..."
                 for k in sorted(st.session_state.personas.keys())
             ]
             
@@ -578,111 +551,106 @@ with tab2:
                 
                 with col_a:
                     st.download_button(
-                        label="Telecharger en TXT",
+                        label="📥 Télécharger en TXT",
                         data=st.session_state.personas[persona_id],
                         file_name=f"persona_cluster_{persona_id}.txt",
                         mime="text/plain"
                     )
                 
                 with col_b:
-                    segment_name = clean_text(next((s.get("name", "Unknown") for s in segments_to_use if s.get("id", -1) == persona_id), "Unknown"))
+                    segment_name = next((s.get("name", "Unknown") for s in segments_to_use if s.get("id", -1) == persona_id), "Unknown")
                     
+                    # Générer le PDF
                     pdf_buffer = generate_persona_pdf(persona_id, st.session_state.personas[persona_id], segment_name)
                     
                     st.download_button(
-                        label="Telecharger en PDF",
+                        label="📥 Télécharger en PDF",
                         data=pdf_buffer,
                         file_name=f"persona_cluster_{persona_id}.pdf",
                         mime="application/pdf"
                     )
         else:
-            st.info("Generez des personas pour les voir ici")
+            st.info("💡 Générez des personas pour les voir ici")
 
 # TAB 3 - CHAT
 with tab3:
-    st.subheader("Assistant Intelligent pour Personas")
+    st.subheader("💬 Assistant Intelligent pour Personas")
     
-    if st.session_state.client is None:
-        st.warning("Veuillez configurer votre cle API OpenAI d'abord.")
+    st.session_state.llm = llm_model
+
+    if "loaded_segments" in st.session_state and st.session_state.loaded_segments:
+        segments_for_chat = st.session_state.loaded_segments
     else:
-        if "loaded_segments" in st.session_state and st.session_state.loaded_segments:
-            segments_for_chat = st.session_state.loaded_segments
-        else:
-            segments_for_chat = segments_data
+        segments_for_chat = segments_data
+    
+    st.write("**Personas générés disponibles:**")
+
+    if st.session_state.personas:
+        for persona_id, content in st.session_state.personas.items():
+            segment_name = next((s.get("name", "Unknown") for s in segments_for_chat if s.get("id", -1) == persona_id), "Unknown")
+            st.info(f"✅ Cluster {persona_id}: {segment_name}")
+    else:
+        st.warning("⚠️ Aucun persona généré. Générez d'abord des personas dans l'onglet 'Générer Personas'")
+    
+    st.divider()
+    st.markdown("Posez des questions sur les personas, les segments ou demandez des recommandations marketing.")
+    
+    for message in st.session_state.conversation_history:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+    
+    user_input = st.chat_input("Posez votre question...")
+    if user_input:
+    
+        st.session_state.conversation_history.append({
+            "role": "user",
+            "content": user_input
+        })
         
-        st.write("**Personas generes disponibles:**")
-        if st.session_state.personas:
-            for persona_id, content in st.session_state.personas.items():
-                segment_name = clean_text(next((s.get("name", "Unknown") for s in segments_for_chat if s.get("id", -1) == persona_id), "Unknown"))
-                st.info(f"Cluster {persona_id}: {segment_name}")
-        else:
-            st.warning("Aucun persona genere. Generez d'abord des personas")
+        with st.chat_message("user"):
+            st.markdown(user_input)
         
-        st.divider()
-        st.write("Posez des questions sur les personas, les segments ou demandez des recommandations marketing.")
+        try:
+            personas_context = "PERSONAS GÉNÉRÉS:\n"
+            if st.session_state.personas:
+                for persona_id, content in st.session_state.personas.items():
+                    segment_name = next((s.get("name", "Unknown") for s in segments_for_chat if s.get("id", -1) == persona_id), "Unknown")
+                    personas_context += f"\n--- Cluster {persona_id}: {segment_name} ---\n{content[:2000]}...\n"
+            else:
+                personas_context += "Aucun persona généré."
+            
+            segments_context = "\n\nSEGMENTS:\n"
+            for segment in segments_for_chat:
+                segments_context += f"- ID: {segment.get('id')}, Nom: {segment.get('name')}, Âge: {segment.get('age')}, "
+                segments_context += f"Produits: {segment.get('nbProducts')}, Revenu H: {segment.get('revenueHommes')}, Revenu F: {segment.get('revenueFemmes')}\n"
+            
+            if st.session_state.produits_bancaires_text:
+                produits_context = f"\n\nCATALOGUE PRODUITS:\n{st.session_state.produits_bancaires_text[:10000]}"
+            else:
+                produits_context = "\n\nNote: Aucun catalogue produits chargé."
+            
+            system_prompt = f"""Tu es un expert en marketing bancaire et segmentation client de Société Générale Côte d'Ivoire.
+                            {personas_context}
+                            {segments_context}
+                            {produits_context}
+                            Utilise ces informations pour répondre aux questions. 
+                            Recommande des produits spécifiques avec tarifs quand le catalogue est disponible."""
+
+            messages_with_system = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_input)
+            ]
+
+            response = st.session_state.llm.invoke(messages_with_system)
         
-        for message in st.session_state.conversation_history:
-            with st.chat_message(message["role"]):
-                st.markdown(message["content"])
-        
-        user_input = st.chat_input("Posez votre question...")
-        
-        if user_input:
+            assistant_message = response
             st.session_state.conversation_history.append({
-                "role": "user",
-                "content": user_input
+                "role": "assistant",
+                "content": assistant_message
             })
-            
-            with st.chat_message("user"):
-                st.markdown(user_input)
-            
-            try:
-                personas_context = "PERSONAS GENERES:\n"
-                if st.session_state.personas:
-                    for persona_id, content in st.session_state.personas.items():
-                        segment_name = clean_text(next((s.get("name", "Unknown") for s in segments_for_chat if s.get("id", -1) == persona_id), "Unknown"))
-                        clean_content = clean_text(content[:2000])
-                        personas_context += f"\n--- Cluster {persona_id}: {segment_name} ---\n{clean_content}...\n"
-                else:
-                    personas_context += "Aucun persona genere."
                 
-                segments_context = "\n\nSEGMENTS:\n"
-                for segment in segments_for_chat:
-                    clean_seg = {k: clean_text(v) for k, v in segment.items()}
-                    segments_context += f"- ID: {clean_seg.get('id')}, Nom: {clean_seg.get('name')}, Age: {clean_seg.get('age')}, "
-                    segments_context += f"Produits: {clean_seg.get('nbProducts')}, Revenu H: {clean_seg.get('revenueHommes')}, Revenu F: {clean_seg.get('revenueFemmes')}\n"
-                
-                if st.session_state.produits_bancaires_text:
-                    produits_context = f"\n\nCATALOGUE PRODUITS:\n{clean_text(st.session_state.produits_bancaires_text[:8000])}"
-                else:
-                    produits_context = "\n\nNote: Aucun catalogue produits charge."
-                
-                system_prompt = f"""Tu es un expert en marketing bancaire et segmentation client de Societe Generale Cote d'Ivoire.
+            with st.chat_message("assistant"):
+                st.markdown(assistant_message)
 
-{personas_context}
-{segments_context}
-{produits_context}
-
-Utilise ces informations pour repondre aux questions. Recommande des produits specifiques avec tarifs quand le catalogue est disponible."""
-                
-                messages_with_system = [
-                    {"role": "system", "content": system_prompt}
-                ] + st.session_state.conversation_history
-                
-                response = st.session_state.client.chat.completions.create(
-                    model=model_choice,
-                    max_tokens=2000,
-                    messages=messages_with_system
-                )
-                
-                assistant_message = response.choices[0].message.content
-                st.session_state.conversation_history.append({
-                    "role": "assistant",
-                    "content": assistant_message
-                })
-                
-                with st.chat_message("assistant"):
-                    st.markdown(assistant_message)
-            
-            except Exception as e:
-                st.error(f"Erreur: {str(e)}")
+        except Exception as e:
+            st.error(f"❌ Erreur: {e}")
